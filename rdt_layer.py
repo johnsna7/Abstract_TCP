@@ -144,11 +144,10 @@ class RDTLayer(object):
         # The data is just part of the entire string that you are trying to send.
         # The seqnum is the sequence number for the segment (in character number, not bytes)
 
-        packet_total = int(len(self.dataToSend) / self.DATA_LENGTH)
+        packet_total = int(len(self.dataToSend) / self.DATA_LENGTH) + 1
         packet_sent = 0
         max_packets = int(self.FLOW_CONTROL_WIN_SIZE / self.DATA_LENGTH)
-        for i in self.receivedAckList:
-            print("awk", i)
+        
         for x in range(packet_total):
             if x not in self.receivedAckList and packet_sent < max_packets:
                 segmentSend = Segment()
