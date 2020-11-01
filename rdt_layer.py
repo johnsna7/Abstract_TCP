@@ -146,8 +146,11 @@ class RDTLayer(object):
 
         packet_total = int(len(self.dataToSend) / self.DATA_LENGTH)
         packet_sent = 0
+        max_packets = int(self.FLOW_CONTROL_WIN_SIZE / self.DATA_LENGTH)
+        for i in self.receivedAckList:
+            print("awk", i)
         for x in range(packet_total):
-            if x not in self.receivedAckList and packet_sent < 3:
+            if x not in self.receivedAckList and packet_sent < max_packets:
                 segmentSend = Segment()
                 seg_start = x * self.DATA_LENGTH
                 seg_end = (x + 1) * self.DATA_LENGTH
@@ -176,41 +179,40 @@ class RDTLayer(object):
     #                                                                                                                  #
     # ################################################################################################################ #
     def processReceiveAndSendRespond(self):
-        # This call returns a list of incoming segments (see Segment class)...
+
+        # Key to sort a list of segments by sequence number
         def sortKey(seg):
             return seg.seqnum
 
+        # This call returns a list of incoming segments (see Segment class)...
         listIncomingSegments = self.receiveChannel.receive()
+
+        # Sort the incoming segments by segment number
         listIncomingSegments.sort(key=sortKey)
-        prev_seq = -1
+
+        # Iterate through incoming segments
         for i in listIncomingSegments:
-            if len(self.receivedDataList) > 0:
-                prev_seq = max(self.receivedDataList, key=sortKey).seqnum
-                # ############################################################################################################ #
-                # What segments have been received?
-                # How will you get them back in order?
-                # This is where a majority of your logic will be implemented
-            if i.seqnum - 1 == prev_seq:
+            segmentAck = Segment()  # Segment acknowledging packet(s) received
+
+            # send ack if received a valid segment
+            if i.seqnum >= 0:
+                segmentAck.setAck(i.seqnum)
+
+            # Client receives ack
+            elif i.seqnum < 0 and i.acknum not in (j.seqnum for j in self.receivedDataList):
+                print("ack received: ", i.to_string())
+                self.receivedAckList.append(i.acknum)
+                self.receivedAckList.sort()
+                segmentAck.setAck(i.acknum)
+
+            if i.seqnum not in (j.seqnum for j in self.receivedDataList):
                 self.receivedDataList.append(i)
                 self.receivedDataList.sort(key=sortKey)
 
-                # ############################################################################################################ #
-                # How do you respond to what you have received?
-                # How can you tell data segments apart from ack segemnts?
-                if i.seqnum >= 0:
+                # set the contents of the ack segments to send.
 
-                    # Somewhere in here you will be setting the contents of the ack segments to send.
-                    # The goal is to employ cumulative ack, just like TCP does...
-                    segmentAck = Segment()  # Segment acknowledging packet(s) received
-                    segmentAck.setAck(i.seqnum)
-                    # ############################################################################################################ #
-                    # Display response segment
-                    print("Sending ack: ", segmentAck.to_string())
+                # Display response segment
+                print("Sending ack: ", segmentAck.to_string())
 
-                    # Use the unreliable sendChannel to send the ack packet
-                    self.sendChannel.send(segmentAck)
-
-            if i.seqnum < 0:
-                #print("ack received: ", i.to_string())
-                self.receivedAckList.append(i.acknum)
-                self.receivedAckList.sort()
+                # Use the unreliable sendChannel to send the ack packet
+                self.sendChannel.send(segmentAck)
