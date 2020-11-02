@@ -144,29 +144,34 @@ class RDTLayer(object):
         # The data is just part of the entire string that you are trying to send.
         # The seqnum is the sequence number for the segment (in character number, not bytes)
 
-        packet_total = int(len(self.dataToSend) / self.DATA_LENGTH) + 1
+
         packet_sent = 0
         max_packets = int(self.FLOW_CONTROL_WIN_SIZE / self.DATA_LENGTH)
-        
-        for x in range(packet_total):
-            if x not in self.receivedAckList and packet_sent < max_packets:
-                segmentSend = Segment()
-                seg_start = x * self.DATA_LENGTH
-                seg_end = (x + 1) * self.DATA_LENGTH
+        next_ack = 0
+        if len(self.receivedAckList) > 0:
+            next_ack = max(self.receivedAckList)
 
-                data = self.dataToSend[seg_start:seg_end]
+        if len(self.dataToSend) > 0:
+            packet_total = int((len(self.dataToSend)) / self.DATA_LENGTH + 1)
+            for x in range(packet_total):
+                if x >= next_ack and x not in self.receivedAckList and packet_sent < max_packets:
+                    segmentSend = Segment()
+                    seg_start = x * self.DATA_LENGTH
+                    seg_end = (x + 1) * self.DATA_LENGTH
 
-                # ############################################################################################################ #
-                # Display sending segment
-                segmentSend.setData(x, data)
-                print("Sending segment: ", segmentSend.to_string())
+                    data = self.dataToSend[seg_start:seg_end]
 
-                # Use the unreliable sendChannel to send the segment
-                self.sendChannel.send(segmentSend)
-                packet_sent += 1
+                    # ############################################################################################################ #
+                    # Display sending segment
+                    segmentSend.setData(x, data)
+                    print("Sending segment: ", segmentSend.to_string())
 
-        if packet_sent > 0:
-            self.num_packets_sent += 3
+                    # Use the unreliable sendChannel to send the segment
+                    self.sendChannel.send(segmentSend)
+                    packet_sent += 1
+
+            if packet_sent > 0:
+                self.num_packets_sent += 3
 
 
     # ################################################################################################################ #
@@ -183,6 +188,8 @@ class RDTLayer(object):
         def sortKey(seg):
             return seg.seqnum
 
+        next_ack = -1
+
         # This call returns a list of incoming segments (see Segment class)...
         listIncomingSegments = self.receiveChannel.receive()
 
@@ -191,20 +198,32 @@ class RDTLayer(object):
 
         # Iterate through incoming segments
         for i in listIncomingSegments:
+            if len(self.receivedDataList) > 0:
+                next_ack = max(j.seqnum for j in self.receivedDataList)
+                print("next_ack", next_ack)
+
             segmentAck = Segment()  # Segment acknowledging packet(s) received
 
             # send ack if received a valid segment
             if i.seqnum >= 0:
-                segmentAck.setAck(i.seqnum)
+                if i.seqnum == next_ack + 1:
+                    segmentAck.setAck(i.seqnum)
+
+                else:
+                    segmentAck.setAck(next_ack)
 
             # Client receives ack
             elif i.seqnum < 0 and i.acknum not in (j.seqnum for j in self.receivedDataList):
                 print("ack received: ", i.to_string())
+                if len(self.receivedAckList) > 0:
+                    next_ack = max(self.receivedAckList)
+                print(next_ack)
+                #if i.acknum > next_ack:
                 self.receivedAckList.append(i.acknum)
                 self.receivedAckList.sort()
                 segmentAck.setAck(i.acknum)
 
-            if i.seqnum not in (j.seqnum for j in self.receivedDataList):
+            if i.seqnum >= 0 and i.seqnum not in (j.seqnum for j in self.receivedDataList):
                 self.receivedDataList.append(i)
                 self.receivedDataList.sort(key=sortKey)
 
