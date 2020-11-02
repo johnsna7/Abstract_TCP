@@ -98,12 +98,11 @@ class RDTLayer(object):
     # ################################################################################################################ #
     def getDataReceived(self):
         # ############################################################################################################ #
-        # Identify the data that has been received...
         data = ""
+
         for i in self.receivedDataList:
             data += i.payload
 
-        # ############################################################################################################ #
         return data
 
     # ################################################################################################################ #
@@ -140,23 +139,24 @@ class RDTLayer(object):
         # The data is just part of the entire string that you are trying to send.
         # The seqnum is the sequence number for the segment (in character number, not bytes)
 
-
         packet_sent = 0
         max_packets = int(self.FLOW_CONTROL_WIN_SIZE / self.DATA_LENGTH)
         window_start = self.cumulative_ack
 
-        print("send cum ack - ", self.cumulative_ack)
-
+        # Send packets in Window
         while packet_sent < max_packets and len(self.dataToSend) > 0:
-            segmentSend = Segment()
             seg_start = window_start * self.DATA_LENGTH
             seg_end = (window_start + 1) * self.DATA_LENGTH
 
             data = self.dataToSend[seg_start:seg_end]
 
+            # Send segment if there is data left to send
             if data:
-                # Display sending segment
+                # Create segment to send
+                segmentSend = Segment()
                 segmentSend.setData(window_start, data)
+
+                # Display sending segment
                 print("Sending segment: ", segmentSend.to_string())
 
                 # Use the unreliable sendChannel to send the segment
@@ -181,24 +181,25 @@ class RDTLayer(object):
 
         # This call returns a list of incoming segments (see Segment class)...
         listIncomingSegments = self.receiveChannel.receive()
-        print("recieve cum ack - ", self.cumulative_ack)
+
         # Sort the incoming segments by segment number
         listIncomingSegments.sort(key=sortKey)
-        highest_ack = self.cumulative_ack
+
         # Iterate through incoming segments
         for i in listIncomingSegments:
-            #print("seg received - ", i.printToConsole())
             segmentAck = Segment()  # Segment acknowledging packet(s) received
 
-            # send ack if received a valid segment
+            # Server receiving packet from client
             if i.seqnum >= 0:
+
+                # Add valid packet to output list and set ack
                 if i.seqnum == self.cumulative_ack and i.checkChecksum() is True:
-                    print(i.checkChecksum())
-                    print(i.calc_checksum(i.payload))
                     segmentAck.setAck(i.seqnum + 1)
                     self.cumulative_ack += 1
                     self.receivedDataList.append(i)
                     self.receivedDataList.sort(key=sortKey)
+
+                # Invalid packet reset ack
                 else:
                     segmentAck.setAck(self.cumulative_ack)
 
@@ -208,9 +209,11 @@ class RDTLayer(object):
                 # Use the unreliable sendChannel to send the ack packet
                 self.sendChannel.send(segmentAck)
 
-            # Client receives ack
+            # Client receives ack from Server
             elif i.seqnum < 0:
-                if i.acknum > self.cumulative_ack:
+
+                # Add new ack to cumulative total
+                if i.acknum > self.cumulative_ack - 1:
                     self.cumulative_ack = i.acknum
                     print("ack received: ", i.to_string())
 
