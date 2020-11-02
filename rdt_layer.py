@@ -31,11 +31,9 @@ class RDTLayer(object):
     receiveChannel = None
     dataToSend = ''
     currentIteration = 0                                # Use this for segment 'timeouts'
-
-    countSegmentTimeouts = 0
     num_packets_sent = 0
     receivedDataList = []
-    receivedAckList = []
+    cumulative_ack = 0
     # Add items as needed
 
     # ################################################################################################################ #
@@ -52,11 +50,9 @@ class RDTLayer(object):
         self.dataToSend = ''
         self.currentIteration = 0
 
-        self.countSegmentTimeouts = 0
         self.num_packets_sent = 0
         self.receivedDataList = []
-        self.receivedAckList = []
-
+        self.cumulative_ack = 0
         # Add items as needed
 
     # ################################################################################################################ #
@@ -147,32 +143,27 @@ class RDTLayer(object):
 
         packet_sent = 0
         max_packets = int(self.FLOW_CONTROL_WIN_SIZE / self.DATA_LENGTH)
-        next_ack = 0
-        if len(self.receivedAckList) > 0:
-            next_ack = max(self.receivedAckList)
+        window_start = self.cumulative_ack
 
-        if len(self.dataToSend) > 0:
-            packet_total = int((len(self.dataToSend)) / self.DATA_LENGTH + 1)
-            for x in range(packet_total):
-                if x >= next_ack and x not in self.receivedAckList and packet_sent < max_packets:
-                    segmentSend = Segment()
-                    seg_start = x * self.DATA_LENGTH
-                    seg_end = (x + 1) * self.DATA_LENGTH
+        print("send cum ack - ", self.cumulative_ack)
 
-                    data = self.dataToSend[seg_start:seg_end]
+        while packet_sent < max_packets and len(self.dataToSend) > 0:
+            segmentSend = Segment()
+            seg_start = window_start * self.DATA_LENGTH
+            seg_end = (window_start + 1) * self.DATA_LENGTH
 
-                    # ############################################################################################################ #
-                    # Display sending segment
-                    segmentSend.setData(x, data)
-                    print("Sending segment: ", segmentSend.to_string())
+            data = self.dataToSend[seg_start:seg_end]
 
-                    # Use the unreliable sendChannel to send the segment
-                    self.sendChannel.send(segmentSend)
-                    packet_sent += 1
+            if data:
+                # Display sending segment
+                segmentSend.setData(window_start, data)
+                print("Sending segment: ", segmentSend.to_string())
 
-            if packet_sent > 0:
-                self.num_packets_sent += 3
+                # Use the unreliable sendChannel to send the segment
+                self.sendChannel.send(segmentSend)
 
+            packet_sent += 1
+            window_start += 1
 
     # ################################################################################################################ #
     # processReceive()                                                                                                 #
@@ -188,49 +179,38 @@ class RDTLayer(object):
         def sortKey(seg):
             return seg.seqnum
 
-        next_ack = -1
-
         # This call returns a list of incoming segments (see Segment class)...
         listIncomingSegments = self.receiveChannel.receive()
-
+        print("recieve cum ack - ", self.cumulative_ack)
         # Sort the incoming segments by segment number
         listIncomingSegments.sort(key=sortKey)
-
+        highest_ack = self.cumulative_ack
         # Iterate through incoming segments
         for i in listIncomingSegments:
-            if len(self.receivedDataList) > 0:
-                next_ack = max(j.seqnum for j in self.receivedDataList)
-                print("next_ack", next_ack)
-
+            #print("seg received - ", i.printToConsole())
             segmentAck = Segment()  # Segment acknowledging packet(s) received
 
             # send ack if received a valid segment
             if i.seqnum >= 0:
-                if i.seqnum == next_ack + 1:
-                    segmentAck.setAck(i.seqnum)
-
+                if i.seqnum == self.cumulative_ack and i.checkChecksum() is True:
+                    print(i.checkChecksum())
+                    print(i.calc_checksum(i.payload))
+                    segmentAck.setAck(i.seqnum + 1)
+                    self.cumulative_ack += 1
+                    self.receivedDataList.append(i)
+                    self.receivedDataList.sort(key=sortKey)
                 else:
-                    segmentAck.setAck(next_ack)
-
-            # Client receives ack
-            elif i.seqnum < 0 and i.acknum not in (j.seqnum for j in self.receivedDataList):
-                print("ack received: ", i.to_string())
-                if len(self.receivedAckList) > 0:
-                    next_ack = max(self.receivedAckList)
-                print(next_ack)
-                #if i.acknum > next_ack:
-                self.receivedAckList.append(i.acknum)
-                self.receivedAckList.sort()
-                segmentAck.setAck(i.acknum)
-
-            if i.seqnum >= 0 and i.seqnum not in (j.seqnum for j in self.receivedDataList):
-                self.receivedDataList.append(i)
-                self.receivedDataList.sort(key=sortKey)
-
-                # set the contents of the ack segments to send.
+                    segmentAck.setAck(self.cumulative_ack)
 
                 # Display response segment
                 print("Sending ack: ", segmentAck.to_string())
 
                 # Use the unreliable sendChannel to send the ack packet
                 self.sendChannel.send(segmentAck)
+
+            # Client receives ack
+            elif i.seqnum < 0:
+                if i.acknum > self.cumulative_ack:
+                    self.cumulative_ack = i.acknum
+                    print("ack received: ", i.to_string())
+
